@@ -52,17 +52,24 @@ equity_curve = []
 trades = []
 current_trade = {}
 
-for i in range(2, len(df)):
+for i in range(2, len(df) - 1):
     row = df.iloc[i]
     prev = df.iloc[i-1]
+    next_row=df.iloc[i+1]
     mtm = 0
-
     # ==============================
     # ENTRY
     # ==============================
     if position == 0:
         if row['Buy_Signal']:
-            entry_price = row['Close']
+            breakout = row['Prev_High']
+
+            if next_row['High'] > breakout:
+              entry_price = max(breakout, next_row['Open'])
+              position = 1
+            else:
+                continue
+
             sl = min(prev['Low'], entry_price * (1 - 0.005))  
             initial_sl = sl  
 
@@ -82,7 +89,14 @@ for i in range(2, len(df)):
                 "Qty": qty}
 
         elif row['Sell_Signal']:
-            entry_price = row['Close']
+            breakout = row['Prev_Low']
+
+            if next_row['Low'] < breakout:
+               entry_price = min(breakout, next_row['Open'])
+               position = -1
+            else:
+                  continue
+            
             sl = max(prev['High'], entry_price * (1 + 0.005))  
             initial_sl = sl  
 
@@ -106,7 +120,9 @@ for i in range(2, len(df)):
     # ==============================
     elif position == 1:
         mtm = (row['Close'] - entry_price) * qty
-        sl = max(sl, df['Low'].iloc[entry_index:i].max() * 0.985) # trailing SL
+        # trailing SL
+        highest = df['High'].iloc[entry_index:i+1].max()
+        sl = max(sl, highest * 0.985)
 
         exit_price = None
         if row['Low'] <= sl:
@@ -141,8 +157,10 @@ for i in range(2, len(df)):
     # ==============================
     elif position == -1:
         mtm = (entry_price - row['Close']) * qty
-        sl = min(sl, df['High'].iloc[entry_index:i].min() * 1.015)  # trailing SL
-
+        # trailing SL
+        highest = df['Low'].iloc[entry_index:i+1].min()
+        sl = min(sl, highest * 1.015)
+        
         exit_price = None
         if row['High'] >= sl:
             exit_price = sl
@@ -185,7 +203,7 @@ sell_trades = trades_df[trades_df["Type"] == "SHORT"].round(2)
 # ==============================
 # EQUITY SERIES
 # ==============================
-equity = pd.Series(equity_curve, index=df.index[2:])
+equity = pd.Series(equity_curve, index=df.index[2:len(df)-1])
 
 # ==============================
 # METRICS
