@@ -73,7 +73,7 @@ for i in range(2, len(df) - 1):
             sl = min(prev['Low'], entry_price * (1 - 0.005))  
             initial_sl = sl  
 
-            entry_index = i
+            entry_index = i+1
             risk = entry_price - sl
             if risk <= 0: continue
 
@@ -100,7 +100,7 @@ for i in range(2, len(df) - 1):
             sl = max(prev['High'], entry_price * (1 + 0.005))  
             initial_sl = sl  
 
-            entry_index = i
+            entry_index = i+1
             risk = sl - entry_price
             if risk <= 0: continue
 
@@ -158,14 +158,14 @@ for i in range(2, len(df) - 1):
     elif position == -1:
         mtm = (entry_price - row['Close']) * qty
         # trailing SL
-        highest = df['Low'].iloc[entry_index:i+1].min()
-        sl = min(sl, highest * 1.015)
+        lowest = df['Low'].iloc[entry_index:i+1].min()
+        sl = min(sl, lowest * 1.015)
         
         exit_price = None
         if row['High'] >= sl:
-            exit_price = sl
+           exit_price = sl
         elif row['Buy_Signal'] and (entry_price - row['Close'] > entry_price * 0.005):
-            exit_price = row['Close']
+             exit_price = row['Close']
 
         # Optional TP
         tp = entry_price - 3 * ( initial_sl- entry_price)
