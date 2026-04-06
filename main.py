@@ -16,7 +16,7 @@ symbol = "^NSEI"
 # ==============================
 # LOAD DATA
 # ==============================
-df = yf.download(symbol, start="2026-02-06", end="2026-04-05", interval="5m")
+df = yf.download(symbol, start="2026-02-07", end="2026-04-06", interval="5m")
 
 if isinstance(df.columns, pd.MultiIndex):
     df.columns = df.columns.get_level_values(0)
@@ -34,8 +34,8 @@ df.dropna(inplace=True)
 df['Prev_High'] = df['High'].shift(1)
 df['Prev_Low'] = df['Low'].shift(1)
 
-df['Buy_Signal'] = df['Close'] > df['Prev_High'] * 1.0005
-df['Sell_Signal'] = df['Close'] < df['Prev_Low'] * 0.9995
+df['Buy_Signal'] = df['Close'] > df['Prev_High'] 
+df['Sell_Signal'] = df['Close'] < df['Prev_Low']
 
 # ==============================
 # BACKTEST
@@ -45,8 +45,9 @@ entry_price = 0
 sl = 0
 qty = 0
 trade_count = 0  # <-- Count trades
+entry_index = 0
+initial_sl = 0
 
-trades = []
 trade_pnls = []
 equity_curve = []
 trades = []
@@ -55,7 +56,6 @@ current_trade = {}
 for i in range(2, len(df) - 1):
     row = df.iloc[i]
     prev = df.iloc[i-1]
-    next_row=df.iloc[i+1]
     mtm = 0
     # ==============================
     # ENTRY
@@ -63,10 +63,9 @@ for i in range(2, len(df) - 1):
     if position == 0:
         if row['Buy_Signal']:
             breakout = row['Prev_High']
-
-            if next_row['High'] > breakout:
-              entry_price = max(breakout, next_row['Open'])
-              position = 1
+            if row['High'] > breakout:
+               entry_price = row['Open']
+               position = 1
             else:
                 continue
 
@@ -84,15 +83,14 @@ for i in range(2, len(df) - 1):
             position = 1
             current_trade = {
                 "Type":"LONG",
-                "Entry_Date": df.index[i],
+                "Entry_Date": df.index[i+1],
                 "Entry_Price": entry_price,
                 "Qty": qty}
 
         elif row['Sell_Signal']:
             breakout = row['Prev_Low']
-
-            if next_row['Low'] < breakout:
-               entry_price = min(breakout, next_row['Open'])
+            if row['Low'] < breakout:
+               entry_price = row['Open']
                position = -1
             else:
                   continue
@@ -111,7 +109,7 @@ for i in range(2, len(df) - 1):
             position = -1
             current_trade = {
                 "Type": "SHORT",
-                "Entry_Date": df.index[i],
+                "Entry_Date": df.index[i+1],
                 "Entry_Price": entry_price,
                 "Qty": qty}
 
@@ -120,20 +118,21 @@ for i in range(2, len(df) - 1):
     # ==============================
     elif position == 1:
         mtm = (row['Close'] - entry_price) * qty
+
         # trailing SL
         highest = df['High'].iloc[entry_index:i+1].max()
         sl = max(sl, highest * 0.985)
 
+        # Optional: Take out profit(tp)
+        tp = entry_price + 3 * (entry_price - initial_sl)
+
         exit_price = None
         if row['Low'] <= sl:
             exit_price = sl
+        elif row['High'] >= tp:
+              exit_price = tp            
         elif row['Sell_Signal'] and (row['Close'] - entry_price > entry_price * 0.005):
             exit_price = row['Close']
-
-        # Optional TP
-        tp = entry_price + 3 * (entry_price - initial_sl)
-        if row['High'] >= tp:
-            exit_price = tp
 
         if exit_price:
             pnl = (exit_price - entry_price) * qty
@@ -148,7 +147,7 @@ for i in range(2, len(df) - 1):
                 "Return_%": (exit_price / entry_price - 1) * 100,
                 "Cost": cost_value})
             
-            trades.append(current_trade)
+            trades.append(current_trade.copy())
             position = 0
             trade_count += 1  # <-- Increment trade counter here
 
@@ -157,20 +156,21 @@ for i in range(2, len(df) - 1):
     # ==============================
     elif position == -1:
         mtm = (entry_price - row['Close']) * qty
+
         # trailing SL
         lowest = df['Low'].iloc[entry_index:i+1].min()
         sl = min(sl, lowest * 1.015)
-        
+
+        # Optional: Take out profit(tp)
+        tp = entry_price - 3 * ( initial_sl- entry_price)
+
         exit_price = None
         if row['High'] >= sl:
            exit_price = sl
+        elif row['Low'] <= tp:
+            exit_price = tp
         elif row['Buy_Signal'] and (entry_price - row['Close'] > entry_price * 0.005):
              exit_price = row['Close']
-
-        # Optional TP
-        tp = entry_price - 3 * ( initial_sl- entry_price)
-        if row['Low'] <= tp:
-            exit_price = tp
 
         if exit_price:
             pnl = (entry_price - exit_price) * qty
@@ -185,7 +185,7 @@ for i in range(2, len(df) - 1):
                 "Return_%": (entry_price / exit_price - 1) * 100,
                 "Cost": cost_value})
             
-            trades.append(current_trade)
+            trades.append(current_trade.copy())
             position = 0
             trade_count += 1  # <-- Increment trade counter here
 
