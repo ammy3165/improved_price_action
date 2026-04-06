@@ -2,8 +2,6 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import math
-from trading_cost import calculate_cost
 
 # ==============================
 # CONFIG
@@ -11,12 +9,13 @@ from trading_cost import calculate_cost
 capital = 100000
 initial_capital = capital
 risk_per_trade = 0.03
+cost = 0.003
 symbol = "^NSEI"
 
 # ==============================
 # LOAD DATA
 # ==============================
-df = yf.download(symbol, start="2026-03-4", end="2026-04-4", interval="5m")
+df = yf.download(symbol, start="2026-02-06", end="2026-04-05", interval="5m")
 
 if isinstance(df.columns, pd.MultiIndex):
     df.columns = df.columns.get_level_values(0)
@@ -34,11 +33,8 @@ df.dropna(inplace=True)
 df['Prev_High'] = df['High'].shift(1)
 df['Prev_Low'] = df['Low'].shift(1)
 
-threshold = 0.001  # 0.1%
-
-df['Buy_Signal'] = df['Close'] > df['Prev_High'] * (1 + threshold)
-df['Sell_Signal'] = df['Close'] < df['Prev_Low'] * (1 - threshold)
-
+df['Buy_Signal'] = df['Close'] > df['Prev_High']
+df['Sell_Signal'] = df['Close'] < df['Prev_Low']
 
 # ==============================
 # BACKTEST
@@ -67,17 +63,13 @@ for i in range(2, len(df)):
 
         if row['Buy_Signal']:
             entry_price = row['Close']
+            sl = prev['Low']
 
-            sl = max(prev['Low'], entry_price * (1 - 0.005))
-           
-            risk = abs(entry_price - sl)
+            risk = entry_price - sl
             if risk <= 0:
                 continue
 
-            qty_risk = (capital * risk_per_trade) / risk
-            qty_capital = capital / entry_price
-            qty = math.floor(min(qty_risk, qty_capital))
-
+            qty = (capital * risk_per_trade) / risk
             position = 1
 
             current_trade = {
@@ -89,16 +81,13 @@ for i in range(2, len(df)):
 
         elif row['Sell_Signal']:
             entry_price = row['Close']
-            sl = min(prev['High'], entry_price * (1 + 0.005))
+            sl = prev['High']
 
             risk = sl - entry_price
             if risk <= 0:
                 continue
 
-            qty_risk = (capital * risk_per_trade) / risk
-            qty_capital = capital / entry_price
-            qty = math.floor(min(qty_risk, qty_capital))
-
+            qty = (capital * risk_per_trade) / risk
             position = -1
 
             current_trade = {
@@ -125,8 +114,7 @@ for i in range(2, len(df)):
 
         if exit_price:
             pnl = (exit_price - entry_price) * qty
-            cost_value = calculate_cost(entry_price, exit_price, qty)
-            pnl -= cost_value
+            pnl -= abs(pnl) * cost
 
             capital += pnl
             trade_pnls.append(pnl)
@@ -135,8 +123,7 @@ for i in range(2, len(df)):
                 "Exit_Date": df.index[i],
                 "Exit_Price": exit_price,
                 "PnL": pnl,
-                "Return_%": (exit_price / entry_price - 1) * 100,
-                "Cost": cost_value
+                "Return_%": (exit_price / entry_price - 1) * 100
             })
 
             trades.append(current_trade)
@@ -159,9 +146,8 @@ for i in range(2, len(df)):
 
         if exit_price:
             pnl = (entry_price - exit_price) * qty
-            cost_value = calculate_cost(entry_price, exit_price, qty)
-            pnl -= cost_value 
-            
+            pnl -= abs(pnl) * cost
+
             capital += pnl
             trade_pnls.append(pnl)
 
@@ -169,8 +155,7 @@ for i in range(2, len(df)):
                 "Exit_Date": df.index[i],
                 "Exit_Price": exit_price,
                 "PnL": pnl,
-                "Return_%": (entry_price / exit_price - 1) * 100,
-                "Cost": cost_value
+                "Return_%": (entry_price / exit_price - 1) * 100
             })
 
             trades.append(current_trade)
@@ -213,15 +198,8 @@ benchmark_return = benchmark_curve.iloc[-1] - 1
 # ==============================
 # WIN RATE
 # ==============================
-def return_based_win_rate(returns):
-    if returns is None or len(returns) == 0:
-        return 0
-
-    total_positive = returns[returns > 0].sum()
-    total_negative = -returns[returns < 0].sum()
-
-    total = total_positive + total_negative
-    return total_positive / total if total != 0 else 0
+wins = [p for p in trade_pnls if p > 0]
+win_rate = len(wins) / len(trade_pnls) if len(trade_pnls) > 0 else 0
 
 # ==============================
 # RESULTS
@@ -232,9 +210,8 @@ print(f"Total Return: {total_return:.2%}")
 print(f"Final Capital: {equity.iloc[-1]:.2f}")
 print(f"Max Drawdown: {max_dd:.2%}")
 print(f"Sharpe Ratio: {sharpe:.2f}")
-print(f"Win Rate: {return_based_win_rate(returns):.2%}")
+print(f"Win Rate: {win_rate:.2%}")
 print(f"Total Trades: {len(trade_pnls)}")
-print("Total Trading Cost Paid:", round(trades_df["Cost"].sum(), 2))
 
 print("\n===== LAST 10 BUY TRADES =====")
 print(buy_trades)
@@ -258,4 +235,3 @@ plt.legend()
 plt.grid()
 
 plt.show()
-

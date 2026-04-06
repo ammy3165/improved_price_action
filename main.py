@@ -106,7 +106,7 @@ for i in range(2, len(df)):
     # ==============================
     elif position == 1:
         mtm = (row['Close'] - entry_price) * qty
-        sl = max(sl, df['Low'].iloc[entry_index:i].min() * 0.995) # trailing SL
+        sl = max(sl, df['Low'].iloc[entry_index:i].min() * 0.990) # trailing SL
 
         exit_price = None
         if row['Low'] <= sl:
@@ -141,7 +141,7 @@ for i in range(2, len(df)):
     # ==============================
     elif position == -1:
         mtm = (entry_price - row['Close']) * qty
-        sl = min(sl, df['High'].iloc[entry_index:i].max() * 1.005)  # trailing SL
+        sl = min(sl, df['High'].iloc[entry_index:i].max() * 1.010)  # trailing SL
 
         exit_price = None
         if row['High'] >= sl:

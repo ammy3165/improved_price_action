@@ -16,7 +16,7 @@ symbol = "^NSEI"
 # ==============================
 # LOAD DATA
 # ==============================
-df = yf.download(symbol, start="2026-02-05", end="2026-04-04", interval="5m")
+df = yf.download(symbol, start="2026-02-06", end="2026-04-05", interval="5m")
 
 if isinstance(df.columns, pd.MultiIndex):
     df.columns = df.columns.get_level_values(0)

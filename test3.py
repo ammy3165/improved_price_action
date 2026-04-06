@@ -2,6 +2,8 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import math
+from trading_cost import calculate_cost
 
 # ==============================
 # CONFIG
@@ -9,13 +11,12 @@ import matplotlib.pyplot as plt
 capital = 100000
 initial_capital = capital
 risk_per_trade = 0.03
-cost = 0.003
 symbol = "^NSEI"
 
 # ==============================
 # LOAD DATA
 # ==============================
-df = yf.download(symbol, start="2026-02-5", end="2026-04-4", interval="5m")
+df = yf.download(symbol, start="2026-02-06", end="2026-04-05", interval="5m")
 
 if isinstance(df.columns, pd.MultiIndex):
     df.columns = df.columns.get_level_values(0)
@@ -23,7 +24,7 @@ if isinstance(df.columns, pd.MultiIndex):
 # Timezone handling
 if df.index.tz is None:
     df = df.tz_localize('UTC')
-df = df.tz_convert('Asia/Kolkata')    
+df = df.tz_convert('Asia/Kolkata')   
 
 df.dropna(inplace=True)
 
@@ -43,125 +44,135 @@ position = 0
 entry_price = 0
 sl = 0
 qty = 0
+trade_count = 0  # <-- Count trades
 
-equity_curve = []
+trades = []
 trade_pnls = []
+equity_curve = []
 trades = []
 current_trade = {}
 
 for i in range(2, len(df)):
-
     row = df.iloc[i]
     prev = df.iloc[i-1]
-
     mtm = 0
 
     # ==============================
     # ENTRY
     # ==============================
     if position == 0:
-
         if row['Buy_Signal']:
             entry_price = row['Close']
-            sl = prev['Low']
+            sl = min(prev['Low'], entry_price * (1 - 0.005))  
+            initial_sl = sl  
 
+            entry_index = i
             risk = entry_price - sl
-            if risk <= 0:
-                continue
+            if risk <= 0: continue
 
-            qty = (capital * risk_per_trade) / risk
+            qty_risk = (capital * risk_per_trade) / risk
+            qty_capital = capital / entry_price
+            qty = math.floor(min(qty_risk, qty_capital))
+
             position = 1
-
             current_trade = {
-                "Type": "LONG",
+                "Type":"LONG",
                 "Entry_Date": df.index[i],
                 "Entry_Price": entry_price,
-                "Qty": qty
-            }
+                "Qty": qty}
 
         elif row['Sell_Signal']:
             entry_price = row['Close']
-            sl = prev['High']
+            sl = max(prev['High'], entry_price * (1 + 0.005))  
+            initial_sl = sl  
 
+            entry_index = i
             risk = sl - entry_price
-            if risk <= 0:
-                continue
+            if risk <= 0: continue
 
-            qty = (capital * risk_per_trade) / risk
+            qty_risk = (capital * risk_per_trade) / risk
+            qty_capital = capital / entry_price
+            qty = math.floor(min(qty_risk, qty_capital))
+
             position = -1
-
             current_trade = {
                 "Type": "SHORT",
                 "Entry_Date": df.index[i],
                 "Entry_Price": entry_price,
-                "Qty": qty
-            }
+                "Qty": qty}
 
     # ==============================
     # LONG POSITION
     # ==============================
     elif position == 1:
-
-        sl = prev['Low']
         mtm = (row['Close'] - entry_price) * qty
+        sl = max(sl, df['Low'].iloc[entry_index:i].min() * 0.990) # trailing SL
 
         exit_price = None
-
         if row['Low'] <= sl:
             exit_price = sl
-        elif row['Sell_Signal']:
+        elif row['Sell_Signal'] and (row['Close'] - entry_price > entry_price * 0.005):
             exit_price = row['Close']
+
+        # Optional TP
+        tp = entry_price + 3 * (entry_price - initial_sl)
+        if row['High'] >= tp:
+            exit_price = tp
 
         if exit_price:
             pnl = (exit_price - entry_price) * qty
-            pnl -= abs(pnl) * cost
-
+            cost_value = calculate_cost(entry_price, exit_price, qty)
+            pnl -= cost_value
             capital += pnl
-            trade_pnls.append(pnl)
 
             current_trade.update({
                 "Exit_Date": df.index[i],
                 "Exit_Price": exit_price,
                 "PnL": pnl,
-                "Return_%": (exit_price / entry_price - 1) * 100
-            })
-
+                "Return_%": (exit_price / entry_price - 1) * 100,
+                "Cost": cost_value})
+            
             trades.append(current_trade)
             position = 0
+            trade_count += 1  # <-- Increment trade counter here
 
     # ==============================
     # SHORT POSITION
     # ==============================
     elif position == -1:
-
-        sl = prev['High']
         mtm = (entry_price - row['Close']) * qty
+        sl = min(sl, df['High'].iloc[entry_index:i].max() * 1.010)  # trailing SL
 
         exit_price = None
-
         if row['High'] >= sl:
             exit_price = sl
-        elif row['Buy_Signal']:
+        elif row['Buy_Signal'] and (entry_price - row['Close'] > entry_price * 0.005):
             exit_price = row['Close']
+
+        # Optional TP
+        tp = entry_price - 3 * ( initial_sl- entry_price)
+        if row['Low'] <= tp:
+            exit_price = tp
 
         if exit_price:
             pnl = (entry_price - exit_price) * qty
-            pnl -= abs(pnl) * cost
-
+            cost_value = calculate_cost(entry_price, exit_price, qty)
+            pnl -= cost_value
             capital += pnl
-            trade_pnls.append(pnl)
 
             current_trade.update({
                 "Exit_Date": df.index[i],
                 "Exit_Price": exit_price,
                 "PnL": pnl,
-                "Return_%": (entry_price / exit_price - 1) * 100
-            })
-
+                "Return_%": (entry_price / exit_price - 1) * 100,
+                "Cost": cost_value})
+            
             trades.append(current_trade)
             position = 0
+            trade_count += 1  # <-- Increment trade counter here
 
     equity_curve.append(capital + mtm)
+
 
 # ==============================
 # TRADES DATAFRAME
@@ -185,7 +196,7 @@ drawdown = (equity / equity.cummax()) - 1
 max_dd = drawdown.min()
 
 returns = equity.pct_change().dropna()
-sharpe = (returns.mean() / returns.std()) * np.sqrt(252)
+sharpe = (returns.mean() / returns.std()) * np.sqrt(252 * 75)
 
 # ==============================
 # BENCHMARK
@@ -198,26 +209,34 @@ benchmark_return = benchmark_curve.iloc[-1] - 1
 # ==============================
 # WIN RATE
 # ==============================
-wins = [p for p in trade_pnls if p > 0]
-win_rate = len(wins) / len(trade_pnls) if len(trade_pnls) > 0 else 0
+def return_based_win_rate(returns):
+    if returns is None or len(returns) == 0:
+        return 0
+
+    total_positive = returns[returns > 0].sum()
+    total_negative = -returns[returns < 0].sum()
+
+    total = total_positive + total_negative
+    return total_positive / total if total != 0 else 0
 
 # ==============================
 # RESULTS
 # ==============================
 print("\n===== RESULTS =====")
+print("Total trades executed:", trade_count)
 print(f"Benchmark Return: {benchmark_return:.2%}")
 print(f"Total Return: {total_return:.2%}")
 print(f"Final Capital: {equity.iloc[-1]:.2f}")
 print(f"Max Drawdown: {max_dd:.2%}")
 print(f"Sharpe Ratio: {sharpe:.2f}")
-print(f"Win Rate: {win_rate:.2%}")
-print(f"Total Trades: {len(trade_pnls)}")
+print(f"Win Rate: {return_based_win_rate(returns):.2%}")
+print("Total Trading Cost Paid:", round(trades_df["Cost"].sum(), 2))
 
 print("\n===== LAST 10 BUY TRADES =====")
-print(buy_trades)
+print(buy_trades.tail(10))
 
 print("\n===== LAST 10 SELL TRADES =====")
-print(sell_trades)
+print(sell_trades.tail(10))
 
 # ==============================
 # PLOT
