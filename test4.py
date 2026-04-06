@@ -31,11 +31,11 @@ df.dropna(inplace=True)
 # ==============================
 # STRATEGY LOGIC
 # ==============================
-df['Prev3_High'] = df['High'].rolling(3).max().shift(1)
-df['Prev3_Low'] = df['Low'].rolling(3).min().shift(1)
+df['Prev3_High'] = df['High']
+df['Prev3_Low'] = df['Low']
 
-df['Buy_Signal'] = df['Close'] > df['Prev3_High']
-df['Sell_Signal'] = df['Close'] < df['Prev3_Low']
+df['Buy_Signal']  = (df['Close'] > df['Prev_High'] * 1.0005) & (df['Close'] > df['EMA'])
+df['Sell_Signal'] = (df['Close'] < df['Prev_Low']  * 0.9995) & (df['Close'] < df['EMA'])
 
 # ==============================
 # BACKTEST

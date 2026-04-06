@@ -34,8 +34,8 @@ df.dropna(inplace=True)
 df['Prev_High'] = df['High'].shift(1)
 df['Prev_Low'] = df['Low'].shift(1)
 
-df['Buy_Signal'] = df['Close'] > df['Prev_High']
-df['Sell_Signal'] = df['Close'] < df['Prev_Low']
+df['Buy_Signal'] = df['Close'] > df['Prev_High'] * 1.0005
+df['Sell_Signal'] = df['Close'] < df['Prev_Low'] * 0.9995
 
 # ==============================
 # BACKTEST
