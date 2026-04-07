@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import math
 from trading_cost import calculate_cost
+from gap_handler import handle_gap
 
 # ==============================
 # CONFIG
@@ -16,7 +17,8 @@ symbol = "^NSEI"
 # ==============================
 # LOAD DATA
 # ==============================
-df = yf.download(symbol, start="2026-02-07", end="2026-04-06", interval="5m")
+# Get last 60 days 5-minute bars
+df = yf.download(symbol, period="60d", interval="5m")
 
 if isinstance(df.columns, pd.MultiIndex):
     df.columns = df.columns.get_level_values(0)
@@ -26,7 +28,19 @@ if df.index.tz is None:
     df = df.tz_localize('UTC')
 df = df.tz_convert('Asia/Kolkata')   
 
+def add_atr(df, period=14):
+    high_low = df['High'] - df['Low']
+    high_close = (df['High'] - df['Close'].shift()).abs()
+    low_close = (df['Low'] - df['Close'].shift()).abs()
+
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    df['ATR'] = tr.rolling(period).mean()
+
+    return df
+
 df.dropna(inplace=True)
+
+df = add_atr(df)
 
 # ==============================
 # STRATEGY LOGIC
@@ -57,7 +71,13 @@ for i in range(2, len(df) - 1):
     row = df.iloc[i]
     prev = df.iloc[i-1]
     mtm = 0
+
     # ==============================
+    # GAP HANDLING
+    # ==============================
+    sl = handle_gap(df, i, position, sl)
+    # ==============================
+
     # ENTRY
     # ==============================
     if position == 0:
@@ -83,7 +103,7 @@ for i in range(2, len(df) - 1):
             position = 1
             current_trade = {
                 "Type":"LONG",
-                "Entry_Date": df.index[i+1],
+                "Entry_Date": df.index[i],
                 "Entry_Price": entry_price,
                 "Qty": qty}
 
@@ -109,7 +129,7 @@ for i in range(2, len(df) - 1):
             position = -1
             current_trade = {
                 "Type": "SHORT",
-                "Entry_Date": df.index[i+1],
+                "Entry_Date": df.index[i],
                 "Entry_Price": entry_price,
                 "Qty": qty}
 

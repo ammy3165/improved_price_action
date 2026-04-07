@@ -1,24 +1,30 @@
+import pandas as pd
 
-GAP_THRESHOLD = 0.005    # 0.5%
+GAP_THRESHOLD = 0.005
+ATR_TRAIL_MULT = 1
 
-gap = (today_open - prev_close) / prev_close
+def handle_gap(df, i, position, sl):
+    if i == 0:
+        return sl
 
-# Long position
-if position == 1:
-    if gap <= -GAP_THRESHOLD:
-        # Gap down > 0.5% → wait, reset trail to open
-        trail_sl = today_open - ATR_TRAIL_MULT * atr
+    atr = df['ATR'].iloc[i]
 
-    else:
-        # Gap down < 0.5% → normal ATR trail continues
-        pass
+    if pd.isna(atr):
+        return sl
 
-# ── SHORT position ──
-elif position == -1:
-    if gap >= GAP_THRESHOLD:
-        # Gap up > 0.5% → wait, reset trail to open
-        trail_sl = today_open + ATR_TRAIL_MULT * atr
+    today_open = df['Open'].iloc[i]
+    prev_close = df['Close'].iloc[i-1]
 
-    else:
-        # Gap up < 0.5% → normal ATR trail continues
-        pass
+    gap = (today_open - prev_close) / prev_close
+
+    if position == 1:
+        if gap <= -GAP_THRESHOLD:
+            new_sl = today_open - ATR_TRAIL_MULT * atr
+            sl = max(sl, new_sl)
+
+    elif position == -1:
+        if gap >= GAP_THRESHOLD:
+            new_sl = today_open + ATR_TRAIL_MULT * atr
+            sl = min(sl, new_sl)
+
+    return sl
