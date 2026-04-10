@@ -1,30 +1,30 @@
-import pandas as pd
+def check_gap_exit(position, row, sl, tp):
+    
+    """
+    Gap-aware exit logic
+    Returns exit_price or None
+    """
 
-GAP_THRESHOLD = 0.005
-ATR_TRAIL_MULT = 1
+    open_price = row['Open']
 
-def handle_gap(df, i, position, sl):
-    if i == 0:
-        return sl
-
-    atr = df['ATR'].iloc[i]
-
-    if pd.isna(atr):
-        return sl
-
-    today_open = df['Open'].iloc[i]
-    prev_close = df['Close'].iloc[i-1]
-
-    gap = (today_open - prev_close) / prev_close
-
+    # LONG position
     if position == 1:
-        if gap <= -GAP_THRESHOLD:
-            new_sl = today_open - ATR_TRAIL_MULT * atr
-            sl = max(sl, new_sl)
+        # gap down stop
+        if open_price <= sl:
+            return open_price
 
+        # gap up profit
+        if open_price >= tp:
+            return open_price
+
+    # SHORT position
     elif position == -1:
-        if gap >= GAP_THRESHOLD:
-            new_sl = today_open + ATR_TRAIL_MULT * atr
-            sl = min(sl, new_sl)
+        # gap up stop
+        if open_price >= sl:
+            return open_price
 
-    return sl
+        # gap down profit
+        if open_price <= tp:
+            return open_price
+
+    return None

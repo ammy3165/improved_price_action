@@ -1,0 +1,281 @@
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import math
+from trading_cost import calculate_cost
+from gap_handler import check_gap_exit
+
+# ==============================
+# CONFIG
+# ==============================
+capital = 100000
+initial_capital = capital
+risk_per_trade = 0.03
+symbol = "^NSEI"
+
+# ==============================
+# LOAD DATA
+# ==============================
+# Get last 60 days 5-minute bars
+df = yf.download(symbol, period="60d", interval="5m")
+
+if isinstance(df.columns, pd.MultiIndex):
+    df.columns = df.columns.get_level_values(0)
+
+# Timezone handling
+if df.index.tz is None:
+    df = df.tz_localize('UTC')
+df = df.tz_convert('Asia/Kolkata')   
+
+df.dropna(inplace=True)
+
+# ==============================
+# STRATEGY LOGIC
+# ==============================
+df['Prev_High'] = df['High'].shift(1)
+df['Prev_Low'] = df['Low'].shift(1)
+
+df['Buy_Signal'] = df['Close'] > df['Prev_High'] 
+df['Sell_Signal'] = df['Close'] < df['Prev_Low']
+
+# ==============================
+# BACKTEST
+# ==============================
+position = 0
+entry_price = 0
+sl = 0
+qty = 0
+trade_count = 0  # <-- Count trades
+entry_index = 0
+initial_sl = 0
+
+trade_pnls = []
+equity_curve = []
+trades = []
+current_trade = {}
+
+for i in range(2, len(df)-1):
+    row  = df.iloc[i]
+    prev = df.iloc[i-1]
+    mtm = 0
+    
+    # ==============================
+    # ENTRY
+    # ==============================
+    if position == 0:
+        if row['Buy_Signal']:
+            breakout = prev['High']
+            
+            if row['High'] < breakout:
+                continue
+            entry_price = max(breakout, row['Open'])
+
+            sl = min(prev['Low'], entry_price * (1 - 0.005))  
+            initial_sl = sl  
+            entry_index = i
+
+            risk = entry_price - sl
+            if risk <= 0: continue
+
+            qty_risk = (capital * risk_per_trade) / risk
+            qty_capital = capital / entry_price
+            qty = math.floor(min(qty_risk, qty_capital))
+
+            position = 1
+            current_trade = {
+                "Type":"LONG",
+                "Entry_Date": df.index[i],
+                "Entry_Price": entry_price,
+                "Qty": qty}
+
+        elif row['Sell_Signal']:
+            breakout = prev['Low']
+            
+            if row['Low'] > breakout:
+                continue
+            entry_price = min(breakout, row['Open'])
+                
+            sl = max(prev['High'], entry_price * (1 + 0.005)) 
+            initial_sl = sl  
+            entry_index = i
+            
+            risk = sl - entry_price
+            if risk <= 0: continue
+
+            qty_risk = (capital * risk_per_trade) / risk
+            qty_capital = capital / entry_price
+            qty = math.floor(min(qty_risk, qty_capital))
+
+            position = -1
+            current_trade = {
+                "Type": "SHORT",
+                "Entry_Date": df.index[i],
+                "Entry_Price": entry_price,
+                "Qty": qty}
+
+    # ==============================
+    # LONG POSITION
+    # ==============================
+    elif position == 1:
+        mtm = (row['Close'] - entry_price) * qty
+
+        # trailing SL
+        highest = df['High'].iloc[entry_index:i].max()
+        sl = max(sl, highest * 0.995)
+
+        # Optional: Take out profit(tp)
+        tp = entry_price + 3 * (entry_price - initial_sl)
+        
+        exit_price = None 
+        # GAP EXIT
+        exit_price = check_gap_exit(position, row, sl, tp)
+
+        if exit_price is None:
+            if row['Low'] <= sl:
+                exit_price = sl
+            elif row['High'] >= tp:
+                exit_price = tp            
+            elif row['Sell_Signal'] and (row['Close'] - entry_price > entry_price * 0.005):
+                exit_price = row['Close']
+
+        if exit_price:
+            pnl = (exit_price - entry_price) * qty
+            cost_value = calculate_cost(entry_price, exit_price, qty)
+            pnl -= cost_value
+            capital += pnl
+
+            current_trade.update({
+                "Exit_Date": df.index[i],
+                "Exit_Price": exit_price,
+                "PnL": pnl,
+                "Return_%": (exit_price / entry_price - 1) * 100,
+                "Cost": cost_value})
+            
+            trades.append(current_trade.copy())
+            position = 0
+            trade_count += 1  # <-- Increment trade counter here
+
+    # ==============================
+    # SHORT POSITION
+    # ==============================
+    elif position == -1:
+        mtm = (entry_price - row['Close']) * qty
+
+        # trailing SL
+        lowest = df['Low'].iloc[entry_index:i].min()
+        sl = min(sl, lowest * 1.005)
+
+        # Optional: Take out profit(tp)
+        tp = entry_price - 3 * (initial_sl - entry_price)
+
+        # GAP EXIT FIRST
+        exit_price = check_gap_exit(position, row, sl, tp)
+
+        if exit_price is None:
+            if row['High'] >= sl:
+                exit_price = sl
+            elif row['Low'] <= tp:
+                exit_price = tp
+            elif row['Buy_Signal'] and (entry_price - row['Close'] > entry_price * 0.005):
+                exit_price = row['Close']
+
+        if exit_price:
+            pnl = (entry_price - exit_price) * qty
+            cost_value = calculate_cost(entry_price, exit_price, qty)
+            pnl -= cost_value
+            capital += pnl
+
+            current_trade.update({
+                "Exit_Date": df.index[i],
+                "Exit_Price": exit_price,
+                "PnL": pnl,
+                "Return_%": (entry_price / exit_price - 1) * 100,
+                "Cost": cost_value})
+            
+            trades.append(current_trade.copy())
+            position = 0
+            trade_count += 1  # <-- Increment trade counter here
+
+    equity_curve.append(capital + mtm)
+
+
+# ==============================
+# TRADES DATAFRAME
+# ==============================
+trades_df = pd.DataFrame(trades)
+
+buy_trades = trades_df[trades_df["Type"] == "LONG"].round(2)
+sell_trades = trades_df[trades_df["Type"] == "SHORT"].round(2)
+
+# ==============================
+# EQUITY SERIES
+# ==============================
+equity = pd.Series(equity_curve, index=df.index[2:len(df)-1])
+
+# ==============================
+# METRICS
+# ==============================
+total_return = (equity.iloc[-1] / initial_capital) - 1
+
+drawdown = (equity / equity.cummax()) - 1
+max_dd = drawdown.min()
+
+returns = equity.pct_change().dropna()
+sharpe = (returns.mean() / returns.std()) * np.sqrt(252 * 75)
+
+# ==============================
+# BENCHMARK
+# ==============================
+df['Benchmark'] = df['Close'].pct_change()
+benchmark_curve = (1 + df['Benchmark']).cumprod().iloc[2:]
+
+benchmark_return = benchmark_curve.iloc[-1] - 1
+
+# ==============================
+# WIN RATE
+# ==============================
+def return_based_win_rate(returns):
+    if returns is None or len(returns) == 0:
+        return 0
+
+    total_positive = returns[returns > 0].sum()
+    total_negative = -returns[returns < 0].sum()
+
+    total = total_positive + total_negative
+    return total_positive / total 
+
+# ==============================
+# RESULTS
+# ==============================
+print("\n===== RESULTS =====")
+print("Total trades executed:", trade_count)
+print(f"Benchmark Return: {benchmark_return:.2%}")
+print(f"Total Return: {total_return:.2%}")
+print(f"Final Capital: {equity.iloc[-1]:.2f}")
+print(f"Max Drawdown: {max_dd:.2%}")
+print(f"Sharpe Ratio: {sharpe:.2f}")
+print(f"Win Rate: {return_based_win_rate(returns):.2%}")
+print("Total Trading Cost Paid:", round(trades_df["Cost"].sum(), 2))
+
+print("\n===== LAST 10 BUY TRADES =====")
+print(buy_trades.tail(10))
+
+print("\n===== LAST 10 SELL TRADES =====")
+print(sell_trades.tail(10))
+
+# ==============================
+# PLOT
+# ==============================
+plt.figure(figsize=(12, 6))
+
+plt.plot(equity.index, equity, label="Strategy", linewidth=2)
+plt.plot(benchmark_curve.index, benchmark_curve * initial_capital, label="Benchmark", linewidth=2)
+
+plt.title("Strategy vs Benchmark")
+plt.xlabel("Date")
+plt.ylabel("Portfolio Value")
+
+plt.legend()
+plt.grid()
+plt.show()

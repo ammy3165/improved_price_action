@@ -4,7 +4,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import math
 from trading_cost import calculate_cost
-from gap_handler import handle_gap
 
 # ==============================
 # CONFIG
@@ -28,19 +27,7 @@ if df.index.tz is None:
     df = df.tz_localize('UTC')
 df = df.tz_convert('Asia/Kolkata')   
 
-def add_atr(df, period=14):
-    high_low = df['High'] - df['Low']
-    high_close = (df['High'] - df['Close'].shift()).abs()
-    low_close = (df['Low'] - df['Close'].shift()).abs()
-
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    df['ATR'] = tr.rolling(period).mean()
-
-    return df
-
 df.dropna(inplace=True)
-
-df = add_atr(df)
 
 # ==============================
 # STRATEGY LOGIC
@@ -67,32 +54,26 @@ equity_curve = []
 trades = []
 current_trade = {}
 
-for i in range(2, len(df) - 1):
-    row = df.iloc[i]
+for i in range(2, len(df)-1):
+    row  = df.iloc[i]
     prev = df.iloc[i-1]
     mtm = 0
-
+    
     # ==============================
-    # GAP HANDLING
-    # ==============================
-    sl = handle_gap(df, i, position, sl)
-    # ==============================
-
     # ENTRY
     # ==============================
     if position == 0:
         if row['Buy_Signal']:
-            breakout = row['Prev_High']
-            if row['High'] > breakout:
-               entry_price = row['Open']
-               position = 1
-            else:
+            breakout = prev['High']
+            
+            if row['High'] < breakout:
                 continue
+            entry_price = min(breakout, row['Open'])
 
             sl = min(prev['Low'], entry_price * (1 - 0.005))  
             initial_sl = sl  
+            entry_index = i
 
-            entry_index = i+1
             risk = entry_price - sl
             if risk <= 0: continue
 
@@ -108,17 +89,16 @@ for i in range(2, len(df) - 1):
                 "Qty": qty}
 
         elif row['Sell_Signal']:
-            breakout = row['Prev_Low']
-            if row['Low'] < breakout:
-               entry_price = row['Open']
-               position = -1
-            else:
-                  continue
+            breakout = prev['Low']
             
-            sl = max(prev['High'], entry_price * (1 + 0.005))  
+            if row['Low'] > breakout:
+                continue
+            entry_price = max(breakout, row['Open'])
+                
+            sl = max(prev['High'], entry_price * (1 + 0.005)) 
             initial_sl = sl  
-
-            entry_index = i+1
+            entry_index = i
+            
             risk = sl - entry_price
             if risk <= 0: continue
 
@@ -141,7 +121,7 @@ for i in range(2, len(df) - 1):
 
         # trailing SL
         highest = df['High'].iloc[entry_index:i+1].max()
-        sl = max(sl, highest * 0.985)
+        sl = max(sl, highest * 0.995)
 
         # Optional: Take out profit(tp)
         tp = entry_price + 3 * (entry_price - initial_sl)
@@ -179,7 +159,7 @@ for i in range(2, len(df) - 1):
 
         # trailing SL
         lowest = df['Low'].iloc[entry_index:i+1].min()
-        sl = min(sl, lowest * 1.015)
+        sl = min(sl, lowest * 1.005)
 
         # Optional: Take out profit(tp)
         tp = entry_price - 3 * ( initial_sl- entry_price)
@@ -255,7 +235,7 @@ def return_based_win_rate(returns):
     total_negative = -returns[returns < 0].sum()
 
     total = total_positive + total_negative
-    return total_positive / total if total != 0 else 0
+    return total_positive / total 
 
 # ==============================
 # RESULTS
